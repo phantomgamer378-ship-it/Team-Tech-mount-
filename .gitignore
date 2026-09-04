@@ -1,0 +1,18 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Secrets / local config
+.env
+
+# Runtime data
+data/
+*.db
+backend/models/   # downloaded checkpoints (AASIST-L etc.) — re-download via scripts/
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
