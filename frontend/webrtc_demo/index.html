@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<!--
+  Voice Clone Shield — WebRTC Audio Capture Demo (Phase 9 + H)
+
+  This page captures microphone audio via getUserMedia + AudioWorklet,
+  resamples to 16 kHz mono float32, and streams 1-second chunks to the
+  backend WebSocket at /ws/session/{session_id}.
+
+  PROTOTYPE: this is not true WebRTC peer-to-peer — it's browser-mic →
+  AudioWorklet → WebSocket. The architecture is designed so that swapping
+  in a real WebRTC peer connection (with aiortc or an SFU) is a drop-in
+  replacement for the transport layer.
+
+  Usage: serve this file from the backend or open it directly. Set the
+  SERVER_URL below to your machine's LAN IP if testing from a phone.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🛡️ Voice Clone Shield — Live Analysis</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --accent: #58a6ff;
+      --danger: #f85149;
+      --warning: #d29922;
+      --success: #3fb950;
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 0.3rem;
+      color: #fff;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: #8b949e;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 520px;
+      margin-bottom: 1rem;
+    }
+
+    .card h2 {
+      font-size: 1rem;
+      margin-bottom: 1rem;
+      color: var(--accent);
+    }
+
+    /* --- Controls --- */
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: 1rem;
+    }
+
+    button {
+      font-family: var(--font);
+      font-size: 0.9rem;
+      padding: 0.65rem 1.4rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    button:hover:not(:disabled) {
+      background: #1f2937;
+      border-color: var(--accent);
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      background: var(--accent);
+      color: #0d1117;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    button.primary:hover:not(:disabled) {
+      background: #79c0ff;
+    }
+
+    button.danger {
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    button.danger:hover:not(:disabled) {
+      background: rgba(248, 81, 73, 0.15);
+    }
+
+    /* --- Status --- */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 1rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
+    .status-bar.idle { background: rgba(139, 148, 158, 0.1); }
+    .status-bar.recording { background: rgba(248, 81, 73, 0.12); color: var(--danger); }
+    .status-bar.analyzing { background: rgba(88, 166, 255, 0.12); color: var(--accent); }
+    .status-bar.done { background: rgba(63, 185, 80, 0.12); color: var(--success); }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .recording .dot { animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* --- Visualizer --- */
+    #visualizer {
+      width: 100%;
+      height: 80px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+      margin-bottom: 1rem;
+    }
+
+    /* --- Log --- */
+    .log {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.75rem;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      max-height: 200px;
+      overflow-y: auto;
+      line-height: 1.5;
+    }
+
+    .log .entry { padding: 1px 0; }
+    .log .info { color: var(--accent); }
+    .log .warn { color: var(--warning); }
+    .log .error { color: var(--danger); }
+    .log .success { color: var(--success); }
+
+    /* --- Results --- */
+    .result-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+
+    .result-item {
+      padding: 0.75rem;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+    }
+
+    .result-item .label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b949e;
+      margin-bottom: 0.3rem;
+    }
+
+    .result-item .value {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .risk-HIGH { color: var(--danger); }
+    .risk-MEDIUM { color: var(--warning); }
+    .risk-LOW { color: var(--success); }
+
+    .full-width { grid-column: 1 / -1; }
+
+    .recommendation {
+      margin-top: 0.75rem;
+      padding: 0.75rem;
+      border-radius: 8px;
+      border-left: 3px solid var(--accent);
+      background: rgba(88, 166, 255, 0.06);
+      font-size: 0.85rem;
+    }
+
+    .config-input {
+      width: 100%;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .config-label {
+      font-size: 0.75rem;
+      color: #8b949e;
+      margin-bottom: 0.3rem;
+      display: block;
+    }
+
+    .hidden { display: none; }
+
+    .footer {
+      margin-top: 2rem;
+      font-size: 0.7rem;
+      color: #484f58;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>🛡️ Voice Clone Shield</h1>
+  <p class="subtitle">WebRTC Audio Capture — Real-time Analysis Demo (PROTOTYPE)</p>
+
+  <!-- Config -->
+  <div class="card">
+    <h2>⚙️ Connection</h2>
+    <label class="config-label">Server WebSocket URL</label>
+    <input type="text" id="serverUrl" class="config-input"
+           value="ws://localhost:8000" placeholder="ws://192.168.x.x:8000" />
+    <div style="font-size: 0.72rem; color: #8b949e;">
+      Use your machine's LAN IP (not localhost) when testing from a phone.<br/>
+      Find it: <code>ipconfig getifaddr en0</code> (macOS)
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="card">
+    <h2>🎙️ Audio Capture</h2>
+    <div class="controls">
+      <button id="btnStart" class="primary" onclick="startCapture()">
+        🎙️ Start Recording
+      </button>
+      <button id="btnStop" class="danger" onclick="stopCapture()" disabled>
+        ⏹ Stop & Analyze
+      </button>
+    </div>
+
+    <div id="statusBar" class="status-bar idle">
+      <div class="dot"></div>
+      <span id="statusText">Ready — click Start to capture microphone audio</span>
+    </div>
+
+    <canvas id="visualizer"></canvas>
+
+    <div class="log" id="logPanel"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="resultsCard" class="card hidden">
+    <h2>📊 Analysis Results</h2>
+    <div class="result-grid" id="resultsGrid"></div>
+    <div id="recommendationBox" class="recommendation hidden"></div>
+  </div>
+
+  <div class="footer">
+    PROTOTYPE — not a production call-security system. Uses browser
+    getUserMedia + AudioWorklet → WebSocket (not true WebRTC peer-to-peer).<br/>
+    Voice detector: pretrained AASIST-L, NOT validated on Hindi/Marathi speech.
+  </div>
+
+  <script>
+    // ====================================================================
+    // State
+    // ====================================================================
+    let ws = null;
+    let audioContext = null;
+    let mediaStream = null;
+    let workletNode = null;
+    let analyserNode = null;
+    let sessionId = null;
+    let chunkBuffer = [];
+    let isRecording = false;
+    let animationId = null;
+
+    const TARGET_SR = 16000;
+    const CHUNK_DURATION_S = 1.0;
+    const CHUNK_SIZE = TARGET_SR * CHUNK_DURATION_S; // 16000 float32 samples
+
+    // ====================================================================
+    // UI helpers
+    // ====================================================================
+    function $(id) { return document.getElementById(id); }
+
+    function setStatus(cls, text) {
+      const bar = $('statusBar');
+      bar.className = 'status-bar ' + cls;
+      $('statusText').textContent = text;
+    }
+
+    function addLog(text, level = 'info') {
+      const panel = $('logPanel');
+      const div = document.createElement('div');
+      div.className = 'entry ' + level;
+      const ts = new Date().toLocaleTimeString();
+      div.textContent = `[${ts}] ${text}`;
+      panel.appendChild(div);
+      panel.scrollTop = panel.scrollHeight;
+    }
+
+    // ====================================================================
+    // AudioWorklet processor (inline as a Blob URL)
+    // ====================================================================
+    function createWorkletBlob() {
+      const code = `
+        class PCMProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this._buffer = new Float32Array(0);
+            this._targetSR = ${TARGET_SR};
+            this._chunkSize = ${CHUNK_SIZE};
+          }
+
+          process(inputs) {
+            const input = inputs[0];
+            if (!input || !input.length) return true;
+
+            // Mono: take first channel
+            const channelData = input[0];
+            if (!channelData || !channelData.length) return true;
+
+            // Accumulate samples
+            const newBuf = new Float32Array(this._buffer.length + channelData.length);
+            newBuf.set(this._buffer);
+            newBuf.set(channelData, this._buffer.length);
+            this._buffer = newBuf;
+
+            // When we have a full chunk, send it
+            while (this._buffer.length >= this._chunkSize) {
+              const chunk = this._buffer.slice(0, this._chunkSize);
+              this._buffer = this._buffer.slice(this._chunkSize);
+              this.port.postMessage({ type: 'chunk', data: chunk.buffer }, [chunk.buffer]);
+            }
+
+            return true;
+          }
+        }
+        registerProcessor('pcm-processor', PCMProcessor);
+      `;
+      return URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+    }
+
+    // ====================================================================
+    // Waveform visualizer
+    // ====================================================================
+    function drawVisualizer() {
+      if (!analyserNode) return;
+      const canvas = $('visualizer');
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width = canvas.offsetWidth * devicePixelRatio;
+      const height = canvas.height = canvas.offsetHeight * devicePixelRatio;
+
+      const bufferLength = analyserNode.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      analyserNode.getByteTimeDomainData(dataArray);
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.strokeStyle = isRecording ? '#f85149' : '#58a6ff';
+      ctx.beginPath();
+
+      const sliceWidth = width / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = v * height / 2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+
+      if (isRecording) {
+        animationId = requestAnimationFrame(drawVisualizer);
+      }
+    }
+
+    // ====================================================================
+    // Start capture
+    // ====================================================================
+    async function startCapture() {
+      try {
+        $('btnStart').disabled = true;
+        setStatus('idle', 'Requesting microphone access…');
+        addLog('Requesting microphone…');
+
+        // 1. Get microphone
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: TARGET_SR,
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+          video: false,
+        });
+        addLog('Microphone access granted', 'success');
+
+        // 2. Create AudioContext at target sample rate
+        audioContext = new AudioContext({ sampleRate: TARGET_SR });
+        const source = audioContext.createMediaStreamSource(mediaStream);
+
+        // 3. Analyser for visualization
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 2048;
+        source.connect(analyserNode);
+
+        // 4. AudioWorklet for PCM chunk extraction
+        const workletUrl = createWorkletBlob();
+        await audioContext.audioWorklet.addModule(workletUrl);
+        workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+        analyserNode.connect(workletNode);
+        workletNode.connect(audioContext.destination);  // needed for processing
+
+        // 5. Handle chunks from the worklet
+        chunkBuffer = [];
+        workletNode.port.onmessage = (e) => {
+          if (e.data.type === 'chunk') {
+            const float32 = new Float32Array(e.data.data);
+            chunkBuffer.push(float32);
+
+            // Send via WebSocket if connected
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(float32.buffer);
+            }
+          }
+        };
+
+        // 6. Connect to WebSocket
+        sessionId = 'web-' + Math.random().toString(36).slice(2, 10);
+        const serverBase = $('serverUrl').value.replace(/\/+$/, '');
+        const wsUrl = `${serverBase}/ws/session/${sessionId}`;
+        addLog(`Connecting to ${wsUrl}…`);
+
+        ws = new WebSocket(wsUrl);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+          addLog('WebSocket connected', 'success');
+          isRecording = true;
+          $('btnStop').disabled = false;
+          setStatus('recording', 'Recording — speak into your microphone…');
+          drawVisualizer();
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            handleServerMessage(msg);
+          } catch (err) {
+            addLog(`Server: ${e.data}`, 'warn');
+          }
+        };
+
+        ws.onerror = (e) => {
+          addLog('WebSocket error', 'error');
+          console.error('WS error:', e);
+        };
+
+        ws.onclose = () => {
+          addLog('WebSocket closed');
+          if (isRecording) stopCapture();
+        };
+
+      } catch (err) {
+        addLog(`Error: ${err.message}`, 'error');
+        setStatus('idle', 'Failed — check permissions and try again');
+        $('btnStart').disabled = false;
+      }
+    }
+
+    // ====================================================================
+    // Stop capture & request analysis
+    // ====================================================================
+    function stopCapture() {
+      isRecording = false;
+      $('btnStop').disabled = true;
+
+      // Stop visualizer
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+
+      // Stop audio
+      if (workletNode) { workletNode.disconnect(); workletNode = null; }
+      if (analyserNode) { analyserNode.disconnect(); analyserNode = null; }
+      if (audioContext) { audioContext.close(); audioContext = null; }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+
+      addLog(`Stopped — ${chunkBuffer.length} chunks captured`);
+
+      // Send "end" signal to trigger analysis
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        setStatus('analyzing', 'Analyzing audio…');
+        ws.send(JSON.stringify({ type: 'end' }));
+        addLog('Sent end signal, waiting for analysis…');
+      } else {
+        setStatus('idle', 'Disconnected before analysis');
+        $('btnStart').disabled = false;
+      }
+    }
+
+    // ====================================================================
+    // Handle server messages
+    // ====================================================================
+    function handleServerMessage(msg) {
+      switch (msg.type) {
+        case 'session_start':
+          addLog(`Session ${msg.session_id} started`);
+          break;
+
+        case 'chunk_ack':
+          addLog(`Chunk #${msg.chunk_index} received (${msg.accumulated_duration_s}s total)`);
+          break;
+
+        case 'status':
+          setStatus('analyzing', msg.message || msg.status);
+          addLog(`Status: ${msg.message || msg.status}`);
+          break;
+
+        case 'analysis_complete':
+          addLog('Analysis complete!', 'success');
+          setStatus('done', 'Analysis complete');
+          displayResults(msg);
+          // Close WebSocket
+          if (ws) { ws.close(); ws = null; }
+          $('btnStart').disabled = false;
+          break;
+
+        case 'error':
+          addLog(`Server error: ${msg.message}`, 'error');
+          break;
+
+        case 'pong':
+          break;
+
+        default:
+          addLog(`Unknown message: ${JSON.stringify(msg)}`, 'warn');
+      }
+    }
+
+    // ====================================================================
+    // Display results
+    // ====================================================================
+    function displayResults(data) {
+      const card = $('resultsCard');
+      const grid = $('resultsGrid');
+      const recBox = $('recommendationBox');
+
+      card.classList.remove('hidden');
+      grid.innerHTML = '';
+
+      const voice = data.voice_analysis || {};
+      const scam = data.scam_analysis || {};
+      const risk = data.risk || {};
+
+      const items = [
+        { label: 'Risk Level', value: risk.level || '—', cls: `risk-${risk.level}` },
+        { label: 'Risk Score', value: `${risk.score ?? '—'} / 100`, cls: `risk-${risk.level}` },
+        { label: 'AI Voice?', value: voice.ai_voice ? '⚠️ YES' : '✅ NO', cls: voice.ai_voice ? 'risk-HIGH' : 'risk-LOW' },
+        { label: 'Voice Risk', value: `${((voice.voice_risk || 0) * 100).toFixed(1)}%` },
+        { label: 'Duration', value: `${data.duration_s || 0}s` },
+        { label: 'Chunks', value: data.chunks_received || 0 },
+      ];
+
+      items.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'result-item';
+        div.innerHTML = `
+          <div class="label">${item.label}</div>
+          <div class="value ${item.cls || ''}">${item.value}</div>
+        `;
+        grid.appendChild(div);
+      });
+
+      // Transcript
+      if (data.transcript) {
+        const div = document.createElement('div');
+        div.className = 'result-item full-width';
+        div.innerHTML = `
+          <div class="label">Transcript</div>
+          <div class="value" style="font-size:0.85rem; font-weight:400;">${data.transcript}</div>
+        `;
+        grid.appendChild(div);
+      }
+
+      // Scam indicators
+      if (scam.indicators && scam.indicators.length) {
+        const div = document.createElement('div');
+        div.className = 'result-item full-width';
+        div.innerHTML = `
+          <div class="label">Scam Indicators</div>
+          <div class="value" style="font-size:0.8rem; font-weight:400; color: var(--warning);">
+            ${scam.indicators.join(' · ')}
+          </div>
+        `;
+        grid.appendChild(div);
+      }
+
+      // Model note
+      if (voice.note) {
+        const div = document.createElement('div');
+        div.className = 'result-item full-width';
+        div.innerHTML = `
+          <div class="label">Model Note</div>
+          <div class="value" style="font-size:0.75rem; font-weight:400; color: #8b949e;">${voice.note}</div>
+        `;
+        grid.appendChild(div);
+      }
+
+      // Fallback warning
+      if (data.fallback_used) {
+        const div = document.createElement('div');
+        div.className = 'result-item full-width';
+        div.innerHTML = `
+          <div class="label" style="color: var(--warning);">⚠️ Demo Mode</div>
+          <div class="value" style="font-size:0.8rem; font-weight:400; color: var(--warning);">
+            Some signals used demo-mode output — not real inference (§20).
+          </div>
+        `;
+        grid.appendChild(div);
+      }
+
+      // Recommendation
+      if (data.note) {
+        recBox.classList.remove('hidden');
+        recBox.textContent = data.note;
+      }
+    }
+  </script>
+</body>
+</html>
