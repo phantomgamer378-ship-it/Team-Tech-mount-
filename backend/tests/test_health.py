@@ -19,10 +19,12 @@ def test_health_endpoint():
     assert body["status"] == "ok"
     assert body["app"] == "Voice Clone Shield"
     assert body["demo_mode"] is True  # default — §20 demo mode is on
+    assert body["privacy_mode"] is True  # privacy-first default (§PRIVACY)
+    assert body["database"] == "connected"  # SQLite initialised at startup
     # voice_detector loads the real AASIST-L checkpoint at startup when the
     # file is present (auto-download otherwise); "demo_mode" if unavailable.
     assert body["services"]["voice_detector"] in ("loaded", "demo_mode")
-    assert body["services"]["asr_service"] == "demo_mode"
+    assert body["services"]["asr_service"] in ("loaded", "demo_mode")  # Phase 5: real backend loads
     assert body["services"]["risk_engine"] == "stateless"
     assert body["services"]["audio_processor"] == "stateless"
 

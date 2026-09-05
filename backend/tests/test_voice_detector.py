@@ -26,12 +26,24 @@ def detector():
 # ------------------------------------------------------------- demo mode (§20)
 
 def test_unloaded_detector_returns_demo_mock():
-    """No model + DEMO_MODE → clearly-labelled mock, never a crash."""
+    """No model + DEMO_MODE → contract-shaped demo mock, never a crash."""
     vd = VoiceDetector()  # fresh, not loaded
-    assert vd.load_model.__doc__  # interface intact
     out = vd.predict(np.zeros(16000, dtype=np.float32))
+
+    # Frozen-contract VoiceTrust block, mock-labelled:
     assert out["model"] == "mock_fallback"
     assert "DEMO MODE" in out["note"]
+    assert out["spoof_risk"] == 0.93          # §3/§7 primary-demo value
+    assert out["status"] == "SUSPICIOUS"
+    assert out["speaker_mismatch_risk"] is None  # identity signal absent — honest
+
+
+def test_demo_mock_hint_routes_normal_scenario():
+    """§DEMO: filename hints steer the canned scenario (presentation aid)."""
+    vd = VoiceDetector()
+    out = vd.predict(np.zeros(16000, dtype=np.float32), source_hint="normal_conversation.wav")
+    assert out["spoof_risk"] == 0.06
+    assert out["status"] == "GENUINE"
 
 
 # ----------------------------------------------------------- real model (§5)
@@ -39,11 +51,11 @@ def test_unloaded_detector_returns_demo_mock():
 def test_predict_output_contract(detector):
     out = detector.predict(np.random.randn(NB_SAMPLES).astype(np.float32) * 0.1)
 
-    assert 0.0 <= out["voice_risk"] <= 1.0
-    assert 0.0 <= out["confidence"] <= 1.0
-    assert 0.0 <= out["p_bonafide"] <= 1.0
-    assert isinstance(out["ai_voice"], bool)
-    assert out["ai_voice"] == (out["voice_risk"] >= SPOOF_THRESHOLD)
+    assert 0.0 <= out["spoof_risk"] <= 1.0
+    assert 0.0 <= out["overall_voice_risk"] <= 1.0
+    assert out["speaker_mismatch_risk"] is None  # no identity signal yet
+    assert out["status"] in ("GENUINE", "SUSPICIOUS")
+    assert out["status"] == ("SUSPICIOUS" if out["spoof_risk"] >= SPOOF_THRESHOLD else "GENUINE")
     assert "Hindi/Marathi" in out["model"]  # the §5 disclaimer lives in the label
     assert "aasist" in out["model"].lower()
 
@@ -53,14 +65,14 @@ def test_predict_is_deterministic(detector):
     x = np.random.RandomState(7).randn(NB_SAMPLES).astype(np.float32) * 0.1
     a = detector.predict(x)
     b = detector.predict(x)
-    assert a["voice_risk"] == b["voice_risk"]
+    assert a["spoof_risk"] == b["spoof_risk"]
 
 
 def test_short_input_is_zero_padded_not_rejected(detector):
     """1 s of audio works: the detector pads to the official 64600 window
     itself (AudioProcessor's 0.5 s minimum is separate)."""
     out = detector.predict(np.zeros(16000, dtype=np.float32))
-    assert "voice_risk" in out
+    assert "spoof_risk" in out
 
 
 def test_empty_waveform_returns_fallback(detector):
@@ -79,7 +91,7 @@ def test_real_speech_like_signal_scores_extreme(detector):
     t = np.arange(NB_SAMPLES) / 16000
     sine = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
     out = detector.predict(sine)
-    assert out["voice_risk"] > 0.5
+    assert out["spoof_risk"] > 0.5
 
 
 def test_demo_mode_env_override():

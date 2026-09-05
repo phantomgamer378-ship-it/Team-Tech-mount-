@@ -9,8 +9,9 @@ clovaai checkpoint; auto-downloaded (426 KB) on first startup if missing.
 How the score works (official convention, verified from the reference code):
   * model output = 2 logits [spoof, bonafide]; bonafide label is 1
   * eval score = logits softmax -> P(bonafide); higher = more genuine
-  * we report voice_risk = 1 - P(bonafide)  (0 = genuine … 1 = synthetic)
-  * ai_voice = voice_risk >= SPOOF_THRESHOLD (0.5 — UNCALIBRATED prototype cut)
+  * we report spoof_risk = 1 - P(bonafide)  (0 = genuine … 1 = synthetic)
+  * status = SUSPICIOUS if spoof_risk >= SPOOF_THRESHOLD else GENUINE
+    (0.5 — UNCALIBRATED prototype cut)
 
 Honesty requirements (§5) — repeat in UI and README, never hide:
   * ~1% EER on ASVspoof2019-LA (its own benchmark), 12–17% EER on
@@ -138,15 +139,19 @@ class VoiceDetector:
 
     # --------------------------------------------------------------- inference
 
-    def predict(self, audio) -> dict:
+    def predict(self, audio, source_hint: str = "") -> dict:
         """
         Voice-authenticity prediction for one clip.
 
         `audio`: float waveform (np.ndarray), mono, 16 kHz — i.e. the
-        "waveform" field of AudioProcessor.preprocess() output (Phase 8 wiring).
-        Inputs are zero-padded / truncated to the official 64600-sample window.
+        "waveform" field of AudioProcessor.preprocess() output (route wiring
+        comes with the analyze endpoints). Inputs are zero-padded / truncated
+        to the official 64600-sample window.
 
-        Returns the §13-compatible voice_analysis dict, or the standard
+        `source_hint` (demo only, e.g. a filename) routes the demo mock's
+        canned values; the real model never reads it for scoring.
+
+        Returns the frozen-contract `voice_trust` block, or the standard
         fallback shape — this method never raises (§20).
         """
         if self.model_loaded:
@@ -155,62 +160,49 @@ class VoiceDetector:
             except Exception as exc:
                 log.warning("VoiceDetector: inference failed (%s)", exc)
                 if settings.DEMO_MODE:
-                    return self._mock()
+                    return self._mock(source_hint)
                 return {"status": "partial", "error": f"Voice inference failed: {exc}", "fallback_used": True}
 
         if settings.DEMO_MODE:
-            return self._mock()
+            return self._mock(source_hint)
 
         return {"status": "partial", "error": "Voice model unavailable", "fallback_used": True}
 
     def _predict_real(self, audio) -> dict:
         import torch
         import torch.nn.functional as F
-        from app.services.audio_processor import AudioProcessor
 
         waveform = np.asarray(audio, dtype=np.float32).reshape(-1)
         if waveform.size == 0:
             return {"status": "partial", "error": "Empty waveform", "fallback_used": True}
 
-        # Multi-window evaluation for audio of any length
-        processor = AudioProcessor()
-        windows = processor.extract_aasist_windows(waveform, window_samples=NB_SAMPLES, hop_samples=32300)
+        # Official eval protocol: keep the first ~4 s, zero-pad if shorter.
+        x = np.zeros(NB_SAMPLES, dtype=np.float32)
+        n = min(waveform.size, NB_SAMPLES)
+        x[:n] = waveform[:n]
 
-        # Batch forward pass for all windows
-        batch_tensors = torch.from_numpy(np.stack(windows)).to(self.device)
         with torch.no_grad():
-            _, logits = self.model(batch_tensors)
-            probs = F.softmax(logits, dim=-1)
+            _, logits = self.model(torch.from_numpy(x).unsqueeze(0).to(self.device))
+            probs = F.softmax(logits, dim=-1)[0]
 
-        # Calculate p_bonafide (index 1) for each window
-        p_bonafides = probs[:, 1].cpu().numpy()
-        spoof_risks = [round(1.0 - float(p), 4) for p in p_bonafides]
-
-        # Peak risk across windows ensures synthetic segments in longer clips are caught
-        peak_spoof_risk = round(max(spoof_risks), 4)
-        mean_spoof_risk = round(float(np.mean(spoof_risks)), 4)
-        mean_p_bonafide = round(float(np.mean(p_bonafides)), 4)
-
+        p_bonafide = float(probs[1])                       # official eval score: higher = genuine
+        spoof_risk = round(1.0 - p_bonafide, 4)            # → 0–1 voice risk (0 = genuine)
         return {
-            "ai_voice": bool(peak_spoof_risk >= SPOOF_THRESHOLD),
-            "voice_risk": peak_spoof_risk,
-            "mean_risk": mean_spoof_risk,
-            "confidence": round(max(mean_p_bonafide, 1.0 - mean_p_bonafide), 4),
-            "p_bonafide": mean_p_bonafide,
-            "windows_evaluated": len(windows),
+            "spoof_risk": spoof_risk,
+            # Identity layer has no real signal yet (Phase 16) — null, never invented.
+            "speaker_mismatch_risk": None,
+            "overall_voice_risk": spoof_risk,  # overall = f(spoof, identity); identity absent → spoof
+            "status": "SUSPICIOUS" if spoof_risk >= SPOOF_THRESHOLD else "GENUINE",
             "model": MODEL_LABEL,
             "note": (
                 f"Pretrained AASIST-L, ASVspoof2019-LA benchmark; threshold {SPOOF_THRESHOLD} "
-                "uncalibrated; NOT validated on Hindi/Marathi speech (§5). PROTOTYPE."
+                "uncalibrated; pretrained baseline, not yet evaluated on Indian-language "
+                "speech (§5). PROTOTYPE."
             ),
         }
 
-    def _mock(self) -> dict:
-        """§20 — clearly-labelled demo output so the pipeline still runs."""
-        return {
-            "ai_voice": True,
-            "voice_risk": 0.93,
-            "confidence": 0.93,
-            "model": "mock_fallback",
-            "note": "DEMO MODE — not real inference (§20)",
-        }
+    def _mock(self, source_hint: str = "") -> dict:
+        """§20/§DEMO — delegate to the shared demo mock (one mock, one truth)."""
+        from app.demo import DemoVoiceDetector
+
+        return DemoVoiceDetector().predict(source_hint=source_hint)

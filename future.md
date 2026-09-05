@@ -1,5 +1,22 @@
 # 🛡️ Voice Clone Shield — Implementation Plan (`future.md`)
 
+> ⚠️ **MASTER PROMPT v3 ADOPTED (single-agent, whole project).** The phase
+> numbering below (4–14) follows the earlier v2 plan; the authoritative plan is
+> now **[docs/architecture.md](docs/architecture.md)** with phases 1–18, the
+> upgraded API contract (voice_trust / asr / attack_types / explanation /
+> risk_timeline / 4-tier risk / policy engine), and the gap analysis mapping
+> v2 work → v3 phases. The v3 "FIRST TASK" (12 design items) is delivered in
+> that document. **Status: v3 Phases 1–11 + HTTP API complete — the full
+> pipeline is served over HTTP**: `POST /api/analyze/audio` returns the
+> canonical contract (real voice+ASR+scam, attack types, risk_timeline,
+> tiered liveness, source-tagged explanation, recommendation) verified with
+> curl + real models; session/history/liveness endpoints live; one shared
+> orchestrator (`app/pipeline.py`) powers both the terminal card and the API.
+> IndicConformer implemented but GATED on HF. 124 tests green.
+> **Next: Phase 12 — WebSocket dynamic risk streaming; then message/URL
+> scanners (14/15) and Flutter (13).**
+> The roadmap, risk register and Q&A below remain valid.
+
 > Single source of truth for **what's built, what's next, and where the real
 > product goes**. Update this file after every phase (mark ✅, add evidence).
 >
