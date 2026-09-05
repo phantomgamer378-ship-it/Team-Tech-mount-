@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Clone Shield — Architecture & Dataflow</title>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Mermaid.js for Diagrams -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true, theme: 'dark', themeVariables: { primaryColor: '#2d3748', primaryTextColor: '#fff', primaryBorderColor: '#4a5568', lineColor: '#63b3ed', fontFamily: 'Outfit' }});</script>
+
+    <style>
+        :root {
+            --bg-dark: #0f111a;
+            --glass-bg: rgba(25, 28, 41, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent-glow: rgba(99, 179, 237, 0.3);
+            --accent: #63b3ed;
+            --accent-secondary: #a0aec0;
+            --text-main: #f8f9fa;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Animations */
+        .animate-on-scroll {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: opacity 0.8s ease-out, transform 0.8s ease-out;
+        }
+
+        .animate-on-scroll.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        @keyframes glowPulse {
+            0% { box-shadow: 0 0 15px rgba(99, 179, 237, 0.2); }
+            50% { box-shadow: 0 0 25px rgba(99, 179, 237, 0.6); }
+            100% { box-shadow: 0 0 15px rgba(99, 179, 237, 0.2); }
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 2rem;
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(99, 179, 237, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 85% 30%, rgba(159, 122, 234, 0.08) 0%, transparent 50%);
+            background-attachment: fixed;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 4rem;
+            padding-top: 2rem;
+        }
+
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #63b3ed, #9f7aea, #63b3ed);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1rem;
+            letter-spacing: -1px;
+            animation: gradientShift 4s ease infinite;
+        }
+
+        p.subtitle {
+            font-size: 1.2rem;
+            color: var(--accent-secondary);
+            font-weight: 300;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Glassmorphism Cards */
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 2.5rem;
+            margin-bottom: 3rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .glass-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px 0 var(--accent-glow);
+        }
+
+        h2 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h2::before {
+            content: '';
+            display: block;
+            width: 8px;
+            height: 32px;
+            background: linear-gradient(to bottom, #63b3ed, #9f7aea);
+            border-radius: 4px;
+        }
+
+        /* Tech Stack Grid */
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .tech-item {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: background 0.3s ease;
+        }
+
+        .tech-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .tech-item h3 {
+            font-size: 1.2rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .tech-item p {
+            font-size: 0.95rem;
+            color: #cbd5e0;
+        }
+
+        /* Mermaid Wrapper */
+        .diagram-wrapper {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            padding: 2rem;
+            overflow-x: auto;
+            text-align: center;
+            border: 1px solid var(--glass-border);
+        }
+
+        /* Workflow Steps */
+        .workflow-steps {
+            list-style: none;
+            counter-reset: workflow-counter;
+            position: relative;
+        }
+
+        .workflow-steps::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 24px;
+            width: 2px;
+            background: linear-gradient(to bottom, #63b3ed, #9f7aea);
+            opacity: 0.3;
+        }
+
+        .step {
+            position: relative;
+            padding-left: 4rem;
+            margin-bottom: 2rem;
+        }
+
+        .step::before {
+            counter-increment: workflow-counter;
+            content: counter(workflow-counter);
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 50px;
+            height: 50px;
+            background: var(--bg-dark);
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.2rem;
+            color: var(--accent);
+            box-shadow: 0 0 15px rgba(99, 179, 237, 0.2);
+            animation: glowPulse 3s infinite;
+            z-index: 1;
+        }
+
+        .step h3 {
+            font-size: 1.3rem;
+            color: #fff;
+            margin-bottom: 0.5rem;
+            padding-top: 10px;
+        }
+
+        .step p {
+            color: #a0aec0;
+            font-size: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 2.5rem; }
+            .step::before {
+                width: 40px; height: 40px; font-size: 1rem; left: 5px;
+            }
+            .workflow-steps::before { left: 25px; }
+            .step { padding-left: 3.5rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>🛡️ Voice Clone Shield</h1>
+        <p class="subtitle">Architecture, Tech Stack, and End-to-End Intelligence Pipeline for Smart India Hackathon</p>
+    </header>
+
+    <!-- TECH STACK SECTION -->
+    <section class="glass-card" id="tech-stack">
+        <h2>Tech Stack & Models</h2>
+        <div class="tech-grid">
+            <div class="tech-item">
+                <h3>Backend Framework</h3>
+                <p><strong>FastAPI (Python 3.11)</strong>: High-performance async API server handling audio processing, routing, and WebSockets.</p>
+            </div>
+            <div class="tech-item">
+                <h3>Deepfake / Voice Detector</h3>
+                <p><strong>AASIST-L (PyTorch)</strong>: Pretrained state-of-the-art anti-spoofing model for zero-shot deepfake voice detection running on CPU.</p>
+            </div>
+            <div class="tech-item">
+                <h3>Speech-to-Text (ASR)</h3>
+                <p><strong>IndicConformer / faster-whisper</strong>: Multilingual ASR optimized for Hindi and Marathi transcription to generate text from speech chunks.</p>
+            </div>
+            <div class="tech-item">
+                <h3>Scam Detection Rule Engine</h3>
+                <p><strong>Rule-based Heuristics</strong>: NLP pattern matching for urgency, OTP/PIN sharing, bank impersonation, and threat vectors.</p>
+            </div>
+            <div class="tech-item">
+                <h3>Frontend Dashboard</h3>
+                <p><strong>Flutter (Dart)</strong>: Cross-platform application connecting to the FastAPI backend to visualize threat timelines and history.</p>
+            </div>
+            <div class="tech-item">
+                <h3>Storage & Data</h3>
+                <p><strong>SQLite</strong>: Lightweight local database for persisting session history, analysis results, and threat events.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- DATAFLOW SECTION -->
+    <section class="glass-card" id="dataflow">
+        <h2>System Dataflow</h2>
+        <p style="margin-bottom: 2rem; color: #a0aec0;">The end-to-end pipeline processing raw audio into a fused risk assessment and actionable threat warnings.</p>
+        
+        <div class="diagram-wrapper">
+            <div class="mermaid">
+                graph TD
+                    A[Client Application / Microphone] -->|Uploads WAV / Streams chunks| B(FastAPI Backend)
+                    
+                    subgraph Preprocessing
+                    B --> C[Audio Processor: 16kHz, Mono, Normalize]
+                    end
+                    
+                    subgraph Intelligence Pipeline
+                    C --> D{Parallel Processing}
+                    D -->|Audio Signal| E[Voice/Deepfake Detector <br/> AASIST-L]
+                    D -->|Audio Signal| F[ASR Service <br/> IndicConformer / Whisper]
+                    F -->|Transcript| G[Scam Analysis Engine <br/> NLP Rules]
+                    end
+                    
+                    subgraph Decision Engine
+                    E -->|Voice Risk Score| H(Risk Fusion Engine)
+                    G -->|Scam Indicators| H
+                    I[Context Risk / Device Context] --> H
+                    
+                    H -->|Total Risk: 0-100| J{Risk Level Assessment}
+                    J -->|LOW / MEDIUM| K[Log & Proceed]
+                    J -->|HIGH| L[Trigger Liveness Challenge]
+                    end
+                    
+                    L -->|Request Challenge| A
+                    A -->|User Response| M[Liveness Verification API]
+                    M --> N[Final Threat Warning & Dashboard Update]
+            </div>
+        </div>
+    </section>
+
+    <!-- WORKFLOW SECTION -->
+    <section class="glass-card" id="workflow">
+        <h2>Execution Workflow</h2>
+        <ul class="workflow-steps">
+            <li class="step">
+                <h3>1. Ingestion & Preprocessing</h3>
+                <p>Audio is captured via the Flutter app (or uploaded) and sent to the FastAPI backend. The <code>AudioProcessor</code> validates the format, converts it to 16 kHz Mono, normalizes the volume, and splits it into 1-second chunks for analysis.</p>
+            </li>
+            <li class="step">
+                <h3>2. Voice Deepfake Analysis</h3>
+                <p>The acoustic chunks are passed into the <strong>AASIST-L</strong> PyTorch model. It extracts spectral features and calculates the probability of the audio being a "bonafide" (real) human voice versus an AI-generated clone/spoof.</p>
+            </li>
+            <li class="step">
+                <h3>3. Transcription (ASR)</h3>
+                <p>Simultaneously, the audio is routed to the <strong>IndicConformer</strong> or <strong>faster-whisper</strong> engine. It transcribes the spoken Hindi or Marathi audio into text, handling code-mixed languages when possible.</p>
+            </li>
+            <li class="step">
+                <h3>4. Scam Detection</h3>
+                <p>The generated transcript is fed into the <strong>ScamDetector</strong>. It scans the text against an extensive rule-set identifying keywords related to impersonation (police, bank), urgency, secrecy, and financial requests (OTP, PIN).</p>
+            </li>
+            <li class="step">
+                <h3>5. Risk Fusion</h3>
+                <p>The <code>RiskEngine</code> combines the scores using a transparent weighted formula (e.g., 40% Voice Risk, 40% Scam Risk, 20% Context). It calculates a final risk score from 0 to 100 and assigns a tier: LOW, MEDIUM, or HIGH.</p>
+            </li>
+            <li class="step">
+                <h3>6. Liveness Challenge (High Risk Only)</h3>
+                <p>If the Risk Tier hits HIGH, the system issues a dynamic, text-based Liveness Challenge via the <code>LivenessService</code> (e.g., asking the user to repeat a specific random phrase) to defeat automated cloning bots.</p>
+            </li>
+            <li class="step">
+                <h3>7. Threat Warning & Dashboard</h3>
+                <p>The final unified <code>AnalysisResponse</code> is returned to the Flutter client, displaying real-time visual warnings, granular scam indicators, and logging the event in the local SQLite threat history database.</p>
+            </li>
+        </ul>
+    </section>
+
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        // Select elements to animate
+        const elementsToAnimate = document.querySelectorAll('.glass-card, .tech-item, .step, header');
+        
+        // Setup initial state and stagger delays
+        elementsToAnimate.forEach((el, index) => {
+            el.classList.add('animate-on-scroll');
+            
+            // Stagger for grid items
+            if(el.classList.contains('tech-item')) {
+                el.style.transitionDelay = `${(index % 6) * 100}ms`;
+            } 
+            // Stagger for workflow steps
+            else if (el.classList.contains('step')) {
+                el.style.transitionDelay = `${(index % 7) * 150}ms`;
+            }
+        });
+
+        // Intersection Observer to trigger animation
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    observer.unobserve(entry.target); // Animate only once
+                }
+            });
+        }, { threshold: 0.1, rootMargin: "0px 0px -50px 0px" });
+
+        elementsToAnimate.forEach(el => observer.observe(el));
+    });
+</script>
+
+</body>
+</html>

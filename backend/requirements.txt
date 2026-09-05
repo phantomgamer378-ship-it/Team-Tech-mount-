@@ -6,6 +6,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-dotenv>=1.0
 pydantic>=2.6
+python-multipart>=0.0.9  # multipart/form parsing for the audio upload endpoint
 
 # --- Phase 2: audio preprocessing (§14) ---
 numpy>=1.26
@@ -13,7 +14,14 @@ soundfile>=0.12.2   # WAV/FLAC/OGG/MP3 read+write, bundles libsndfile
 librosa>=0.10.2     # resampling (soxr engine)
 
 # --- Phase 3: AASIST-L voice/deepfake detector (§5) ---
-torch>=2.2          # CPU wheels are fine on macOS arm64; no torchaudio needed yet
+torch>=2.2          # CPU wheels are fine on macOS arm64
+torchaudio>=2.2     # required by IndicConformer's remote code (Phase 5)
+
+# --- Phase 5: Hindi/Marathi ASR (§6) ---
+transformers>=4.40  # IndicConformer path (GATED on HF — needs access request + token)
+faster-whisper>=1.0 # DEFAULT working backend — CPU int8, not gated (Systran/CTranslate2)
+# NOTE: gTTS (scripts/generate_tts_samples.py) is a one-off sample-generation
+# tool, NOT a runtime dependency — install it separately if regenerating demos.
 
 # --- dev / test ---
 pytest>=8.0

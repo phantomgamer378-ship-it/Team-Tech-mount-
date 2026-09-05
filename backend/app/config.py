@@ -33,10 +33,23 @@ class Settings:
     # launch-blocking requirement, not a nice-to-have (§24).
     DEMO_MODE: bool = _bool("DEMO_MODE", True)
 
+    # USE_DEMO_SERVICES (§DEMO FALLBACK SYSTEM): when True, the ServiceContainer
+    # wires the app/demo/* mocks for EVERY service — the whole pipeline runs
+    # contract-valid fake data with zero models installed. Prototype/demo only;
+    # health still reports each mock as demo_mode and outputs say "DEMO MODE".
+    USE_DEMO_SERVICES: bool = _bool("USE_DEMO_SERVICES", False)
+
     # Model settings
     MODEL_PATH: str = os.getenv("MODEL_PATH", "")  # override all model storage locations
     ASR_MODEL: str = os.getenv("ASR_MODEL", "ai4bharat/indic-conformer-600m-multilingual")
     DEVICE: str = os.getenv("DEVICE", "cpu")  # "cpu" | "cuda" | "mps"
+
+    # ASR backend (§ASR STRATEGY / §6): "faster_whisper" is the default because
+    # the IndicConformer HF repo is GATED (requires a manual access request +
+    # HF token). Set ASR_BACKEND=indic_conformer once the team has HF access —
+    # both live behind the same ASRService interface (one-line switch).
+    ASR_BACKEND: str = os.getenv("ASR_BACKEND", "faster_whisper")
+    WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "small")  # tiny|base|small|medium|large-v3
 
     # Voice detector (Phase 3) — AASIST-L checkpoint.
     # Primary URL is the HF repo the master prompt points at; fallback is the
@@ -59,11 +72,21 @@ class Settings:
     PORT: int = int(os.getenv("PORT", "8000"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    # Storage (SQLite lands in a later phase — §17)
-    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/shield.db")
+    # Storage (SQLite for the prototype — §17). Absolute path so the server
+    # works from any working directory.
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "shield.db"))
+
+    # PRIVACY-FIRST (§PRIVACY): when True (the default), raw audio is never
+    # persisted — only metadata, scores and evidence. Production would add
+    # encryption at rest, consent flows and retention limits.
+    PRIVACY_MODE: bool = _bool("PRIVACY_MODE", True)
 
     # Uploads — enforced properly when audio upload lands in Phase 8.
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "10"))
+
+    # Adaptive liveness (§ADAPTIVE LIVENESS): a challenge expires after this
+    # many seconds — replayed/late responses count as FAILED.
+    LIVENESS_EXPIRY_SECONDS: int = int(os.getenv("LIVENESS_EXPIRY_SECONDS", "60"))
 
 
 settings = Settings()

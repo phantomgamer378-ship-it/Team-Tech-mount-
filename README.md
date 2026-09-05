@@ -5,6 +5,10 @@
 > only; there is no SIM/cellular call interception. Whenever a heavyweight
 > model isn't loaded, services return **clearly-labelled demo-mode output**
 > ("DEMO MODE — not real inference") instead of crashing (§20).
+>
+> 📋 **Full implementation plan + roadmap:** see [future.md](future.md)
+> (status snapshot, remaining phases 4–14 with acceptance criteria, future
+> product roadmap A–L, risk register, judge Q&A).
 
 ## Problem
 
