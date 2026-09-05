@@ -19,6 +19,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.liveness import router as liveness_router
+from app.api.analyze import router as analyze_router
 from app.config import settings
 from app.services import ServiceContainer
 from app.utils.logging_setup import setup_logging
@@ -67,6 +69,8 @@ app.add_middleware(
 app.state.services = ServiceContainer()
 
 app.include_router(health_router)
+app.include_router(liveness_router)
+app.include_router(analyze_router)
 
 
 @app.get("/", tags=["meta"])
