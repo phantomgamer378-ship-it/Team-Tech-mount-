@@ -166,27 +166,38 @@ class VoiceDetector:
     def _predict_real(self, audio) -> dict:
         import torch
         import torch.nn.functional as F
+        from app.services.audio_processor import AudioProcessor
 
         waveform = np.asarray(audio, dtype=np.float32).reshape(-1)
         if waveform.size == 0:
             return {"status": "partial", "error": "Empty waveform", "fallback_used": True}
 
-        # Official eval protocol: keep the first ~4 s, zero-pad if shorter.
-        x = np.zeros(NB_SAMPLES, dtype=np.float32)
-        n = min(waveform.size, NB_SAMPLES)
-        x[:n] = waveform[:n]
+        # Multi-window evaluation for audio of any length
+        processor = AudioProcessor()
+        windows = processor.extract_aasist_windows(waveform, window_samples=NB_SAMPLES, hop_samples=32300)
 
+        # Batch forward pass for all windows
+        batch_tensors = torch.from_numpy(np.stack(windows)).to(self.device)
         with torch.no_grad():
-            _, logits = self.model(torch.from_numpy(x).unsqueeze(0).to(self.device))
-            probs = F.softmax(logits, dim=-1)[0]
+            _, logits = self.model(batch_tensors)
+            probs = F.softmax(logits, dim=-1)
 
-        p_bonafide = float(probs[1])          # official eval score: higher = genuine
-        spoof_risk = round(1.0 - p_bonafide, 4)  # → our 0–1 voice_risk (0 = genuine)
+        # Calculate p_bonafide (index 1) for each window
+        p_bonafides = probs[:, 1].cpu().numpy()
+        spoof_risks = [round(1.0 - float(p), 4) for p in p_bonafides]
+
+        # Peak risk across windows ensures synthetic segments in longer clips are caught
+        peak_spoof_risk = round(max(spoof_risks), 4)
+        mean_spoof_risk = round(float(np.mean(spoof_risks)), 4)
+        mean_p_bonafide = round(float(np.mean(p_bonafides)), 4)
+
         return {
-            "ai_voice": bool(spoof_risk >= SPOOF_THRESHOLD),
-            "voice_risk": spoof_risk,
-            "confidence": round(max(p_bonafide, 1.0 - p_bonafide), 4),
-            "p_bonafide": round(p_bonafide, 4),
+            "ai_voice": bool(peak_spoof_risk >= SPOOF_THRESHOLD),
+            "voice_risk": peak_spoof_risk,
+            "mean_risk": mean_spoof_risk,
+            "confidence": round(max(mean_p_bonafide, 1.0 - mean_p_bonafide), 4),
+            "p_bonafide": mean_p_bonafide,
+            "windows_evaluated": len(windows),
             "model": MODEL_LABEL,
             "note": (
                 f"Pretrained AASIST-L, ASVspoof2019-LA benchmark; threshold {SPOOF_THRESHOLD} "

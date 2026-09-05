@@ -137,6 +137,48 @@ class AudioProcessor:
             return []
         return [waveform[i : i + n] for i in range(0, len(waveform), n)]
 
+    def pad_or_truncate_aasist(
+        self, waveform: "np.ndarray", target_samples: int = 64600
+    ) -> "np.ndarray":
+        """
+        Ensures a waveform is exactly `target_samples` long (default 64,600 for AASIST-L).
+        - If shorter: repeats the audio (tiling) to reach target_samples.
+        - If longer: truncates to the first target_samples.
+        """
+        import numpy as np
+
+        if waveform.size == 0:
+            return np.zeros(target_samples, dtype=np.float32)
+
+        if len(waveform) < target_samples:
+            repeats = int(np.ceil(target_samples / len(waveform)))
+            tiled = np.tile(waveform, repeats)
+            return tiled[:target_samples].astype(np.float32, copy=False)
+        else:
+            return waveform[:target_samples].astype(np.float32, copy=False)
+
+    def extract_aasist_windows(
+        self, waveform: "np.ndarray", window_samples: int = 64600, hop_samples: int = 32300
+    ) -> List["np.ndarray"]:
+        """
+        Extracts overlapping fixed-size windows (64,600 samples) for multi-window AASIST evaluation.
+        Short audio (< 64,600 samples) returns a single padded window.
+        """
+        import numpy as np
+
+        if len(waveform) < window_samples:
+            return [self.pad_or_truncate_aasist(waveform, window_samples)]
+
+        windows = []
+        for start in range(0, len(waveform) - window_samples + 1, hop_samples):
+            windows.append(waveform[start : start + window_samples].astype(np.float32, copy=False))
+
+        # Handle leftover tail if any
+        if (len(waveform) - window_samples) % hop_samples != 0:
+            windows.append(self.pad_or_truncate_aasist(waveform[-window_samples:], window_samples))
+
+        return windows
+
     # ------------------------------------------------------------- internals
 
     def _validated_path(self, audio_path) -> Path | dict:

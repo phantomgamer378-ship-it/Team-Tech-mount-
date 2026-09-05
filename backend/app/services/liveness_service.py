@@ -10,12 +10,13 @@ verification system. Say this out loud to judges.
 """
 import logging
 import random
+import time
 from typing import Dict, Optional
 
 log = logging.getLogger(__name__)
 
 CHALLENGE_WORDS = ["Blue", "Tiger", "River", "Falcon", "Monsoon", "Copper", "Sunrise", "Banyan"]
-
+CHALLENGE_EXPIRY_SEC = 60
 
 class LivenessService:
     has_model = False  # stateless — reported in /api/health
@@ -28,7 +29,11 @@ class LivenessService:
     def start_challenge(self, session_id: str) -> dict:
         """Generate a random speakable phrase, e.g. 'Blue Tiger 47' (§9)."""
         phrase = f"{' '.join(random.sample(CHALLENGE_WORDS, 2))} {random.randint(10, 99)}"
-        self._challenges[session_id] = {"challenge": phrase, "status": "PENDING"}
+        self._challenges[session_id] = {
+            "challenge": phrase, 
+            "status": "PENDING",
+            "created_at": time.time()
+        }
         log.info("Liveness challenge started for session=%s", session_id)
         return {
             "session_id": session_id,
@@ -40,26 +45,34 @@ class LivenessService:
     def verify(self, session_id: str, spoken_text: Optional[str] = None) -> dict:
         """
         Phase 7 hook. PROTOTYPE check: naive case-insensitive text compare only.
-
-        A real implementation would do speaker verification / anti-spoofing on
-        the response audio — that is a future phase, not this prototype (§9).
+        Enforces expiry and single-use logic.
         """
-        record = self._challenges.get(session_id)
+        record = self._challenges.pop(session_id, None)  # Single-use: always remove the record
+        
         if not record:
             return {
                 "session_id": session_id,
                 "status": "FAILED",
-                "note": "No challenge started for this session",
+                "note": "No challenge started for this session or challenge was already used.",
+            }
+
+        # Check expiry
+        if time.time() - record["created_at"] > CHALLENGE_EXPIRY_SEC:
+            return {
+                "session_id": session_id,
+                "status": "SUSPICIOUS",
+                "challenge": record["challenge"],
+                "note": "Challenge expired.",
             }
 
         if spoken_text and spoken_text.strip().lower() == record["challenge"].lower():
-            record["status"] = "LIVE"
+            status = "LIVE"
         else:
-            record["status"] = "SUSPICIOUS"
+            status = "SUSPICIOUS"
 
         return {
             "session_id": session_id,
-            "status": record["status"],
+            "status": status,
             "challenge": record["challenge"],
             "note": (
                 "PROTOTYPE check — text match only; a cloned voice repeating the "

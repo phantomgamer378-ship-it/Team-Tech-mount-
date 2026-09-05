@@ -151,3 +151,31 @@ def test_mono_averaging_of_stereo(processor):
 
     assert mono.shape == (2,)
     assert mono[0] == pytest.approx(0.75)
+
+
+def test_pad_or_truncate_aasist_short_audio(processor):
+    short_waveform = np.ones(10000, dtype=np.float32)
+    padded = processor.pad_or_truncate_aasist(short_waveform, target_samples=64600)
+
+    assert len(padded) == 64600
+    assert np.all(padded[:10000] == 1.0)
+    assert np.all(padded[10000:20000] == 1.0)  # tiled repetition
+
+
+def test_pad_or_truncate_aasist_long_audio(processor):
+    long_waveform = np.arange(100000, dtype=np.float32)
+    truncated = processor.pad_or_truncate_aasist(long_waveform, target_samples=64600)
+
+    assert len(truncated) == 64600
+    assert truncated[0] == 0.0
+    assert truncated[64599] == 64599.0
+
+
+def test_extract_aasist_windows(processor):
+    # 100,000 samples (~6.25 seconds) with hop of 32,300 (~2.02 seconds)
+    waveform = np.arange(100000, dtype=np.float32)
+    windows = processor.extract_aasist_windows(waveform, window_samples=64600, hop_samples=32300)
+
+    assert len(windows) >= 2
+    assert all(len(w) == 64600 for w in windows)
+

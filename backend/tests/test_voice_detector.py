@@ -93,3 +93,19 @@ def test_demo_mode_env_override():
         assert out["status"] == "partial"
     finally:
         settings.DEMO_MODE = original
+
+
+def test_multi_window_predict_long_audio(detector):
+    """
+    Audio longer than 64600 samples (~4.04s) triggers multi-window extraction
+    and returns windows_evaluated > 1 with mean_risk.
+    """
+    long_waveform = np.random.randn(120000).astype(np.float32) * 0.1
+    out = detector.predict(long_waveform)
+
+    assert "windows_evaluated" in out
+    assert out["windows_evaluated"] >= 2
+    assert "mean_risk" in out
+    assert 0.0 <= out["mean_risk"] <= 1.0
+    assert 0.0 <= out["voice_risk"] <= 1.0
+
